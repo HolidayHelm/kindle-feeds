@@ -1,0 +1,15 @@
+{
+  "name": "kindle-feeds",
+  "version": "1.0.0",
+  "description": "Merged RSS feed for Kindle",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "rss": "^1.2.2",
+    "rss-parser": "^3.12.0"
+  }
+}
