@@ -13,5 +13,6 @@
     "rss-parser": "^3.12.0",
     "node-fetch": "^3.3.2",
     "@extractus/article-extractor": "^8.0.1"
+    "sanitize-html": "^2.12.1"
   }
 }
