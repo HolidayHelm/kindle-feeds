@@ -1,11 +1,11 @@
 import express from "express";
 import Parser from "rss-parser";
 import RSS from "rss";
+import { extract } from "@extractus/article-extractor";
 
 const app = express();
 const parser = new Parser();
 
-// Your Feedly feeds
 const FEEDS = [
   "https://code.facebook.com/posts/rss",
   "http://techblog.netflix.com/feeds/posts/default",
@@ -17,8 +17,8 @@ const FEEDS = [
 app.get("/", async (req, res) => {
   try {
     const mergedFeed = new RSS({
-      title: "Kindle Feeds",
-      description: "Engineering blogs merged",
+      title: "Kindle Feeds (Full Text)",
+      description: "Engineering blogs merged with full articles",
       feed_url: `${req.protocol}://${req.get("host")}/`,
       site_url: "https://example.com",
       language: "en"
@@ -26,14 +26,25 @@ app.get("/", async (req, res) => {
 
     for (const url of FEEDS) {
       const feed = await parser.parseURL(url);
-      feed.items.forEach(item => {
+      for (const item of feed.items) {
+        let fullContent = item.content || item.contentSnippet || "";
+
+        try {
+          const article = await extract(item.link);
+          if (article?.content) {
+            fullContent = article.content;
+          }
+        } catch (err) {
+          console.error(`Failed to extract full text for ${item.link}:`, err.message);
+        }
+
         mergedFeed.item({
           title: item.title,
-          description: item.content || item.contentSnippet,
+          description: fullContent,
           url: item.link,
           date: item.pubDate
         });
-      });
+      }
     }
 
     res.type("application/rss+xml");
@@ -44,4 +55,4 @@ app.get("/", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`RSS merger running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Full-text RSS merger running on port ${PORT}`));
