@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: kindle-epub
+    env: node
+    buildCommand: |
+      apt-get update && \
+      apt-get install -y calibre && \
+      npm install
+    startCommand: node index.js
+    envVars:
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_PASS
+        sync: false
+      - key: KINDLE_EMAIL
+        sync: false
