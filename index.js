@@ -1,92 +1,129 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // Ignore bad certs
+
 import express from "express";
 import Parser from "rss-parser";
-import RSS from "rss";
 import { extract } from "@extractus/article-extractor";
 import sanitizeHtml from "sanitize-html";
+import { writeFileSync } from "fs";
+import { execSync } from "child_process";
+import nodemailer from "nodemailer";
 
 const app = express();
 const parser = new Parser();
 
 const FEEDS = [
   "https://code.facebook.com/posts/rss",
-  "http://techblog.netflix.com/feeds/posts/default",
-  "http://labs.spotify.com/feed/",
-  "http://www.awsarchitectureblog.com/atom.xml",
+  "https://techblog.netflix.com/feeds/posts/default",
+  "https://labs.spotify.com/feed/",
+  "https://www.awsarchitectureblog.com/atom.xml",
   "https://slack.engineering/feed"
 ];
+const DAYS_BACK = 30;
+const GMAIL_USER = "joshuareyesdevera@gmail.com";
+const GMAIL_PASS = "zdwrnybnmzxrpaqs"; // Google App Password
+const KINDLE_EMAIL = "joshuareyesdevera_5322@kindle.com";
 
-// Allowed tags and attributes for Kindle
+// Calibre command (Render installs via apt)
+const CALIBRE_CONVERT = "ebook-convert";
+
 const ALLOWED_TAGS = [
   "p", "br", "strong", "em", "b", "i", "u", "blockquote",
   "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6",
   "img", "a"
 ];
-const ALLOWED_ATTRS = {
-  a: ["href"],
-  img: ["src", "alt"]
-};
+const ALLOWED_ATTRS = { a: ["href"], img: ["src", "alt"] };
 
-app.get("/", async (req, res) => {
-  try {
-    const mergedFeed = new RSS({
-      title: "Kindle Feeds (Optimized)",
-      description: "Full-text, Kindle-formatted engineering blogs",
-      feed_url: `${req.protocol}://${req.get("host")}/`,
-      site_url: "https://example.com",
-      language: "en"
-    });
-
-    for (const url of FEEDS) {
-      const feed = await parser.parseURL(url);
-      for (const item of feed.items) {
-        let fullContent = item.content || item.contentSnippet || "";
-
-        try {
-          const article = await extract(item.link);
-          if (article?.content) {
-            fullContent = article.content;
-          }
-        } catch (err) {
-          console.error(`Full-text extraction failed for ${item.link}: ${err.message}`);
+function sanitize(content) {
+  return sanitizeHtml(content, {
+    allowedTags: ALLOWED_TAGS,
+    allowedAttributes: ALLOWED_ATTRS,
+    transformTags: {
+      img: (tagName, attribs) => {
+        if (attribs.src && attribs.src.startsWith("//")) {
+          attribs.src = "https:" + attribs.src;
         }
-
-        // Clean & format for Kindle
-        let cleanContent = sanitizeHtml(fullContent, {
-          allowedTags: ALLOWED_TAGS,
-          allowedAttributes: ALLOWED_ATTRS,
-          transformTags: {
-            img: (tagName, attribs) => {
-              // Ensure HTTPS for Kindle
-              if (attribs.src && attribs.src.startsWith("//")) {
-                attribs.src = "https:" + attribs.src;
-              }
-              return { tagName, attribs };
-            }
-          }
-        });
-
-        // Basic inline CSS for readability
-        const kindleHTML = `
-          <div style="font-family: serif; font-size: 1.1em; line-height: 1.5; margin: 0 5%;">
-            ${cleanContent}
-          </div>
-        `;
-
-        mergedFeed.item({
-          title: item.title,
-          description: kindleHTML,
-          url: item.link,
-          date: item.pubDate
-        });
+        return { tagName, attribs };
       }
     }
+  });
+}
 
-    res.type("application/rss+xml");
-    res.send(mergedFeed.xml());
-  } catch (err) {
-    res.status(500).send(err.toString());
+async function generateAndSendEPUB() {
+  let allArticles = [];
+  const cutoff = Date.now() - DAYS_BACK * 24 * 60 * 60 * 1000;
+
+  for (const url of FEEDS) {
+    try {
+      const feed = await parser.parseURL(url);
+      for (const item of feed.items) {
+        const pubDate = item.pubDate ? new Date(item.pubDate).getTime() : null;
+        if (!pubDate || pubDate < cutoff) continue;
+
+        let fullContent = item.content || item.contentSnippet || "";
+        try {
+          const article = await extract(item.link);
+          if (article?.content) fullContent = article.content;
+        } catch (err) {
+          console.warn(`⚠️ Could not extract: ${item.link} — ${err.message}`);
+        }
+
+        allArticles.push({
+          title: item.title,
+          date: pubDate,
+          content: sanitize(fullContent)
+        });
+      }
+    } catch (err) {
+      console.warn(`⚠️ Could not fetch feed: ${url} — ${err.message}`);
+    }
   }
+
+  // Sort newest → oldest
+  allArticles.sort((a, b) => b.date - a.date);
+
+  // HTML with TOC chapters (h2 = chapter marker for Calibre)
+  const htmlBody = `
+    <html>
+    <body style="font-family: serif; font-size: 1.1em; line-height: 1.5; margin: 5%;">
+      <h1>Engineering Blogs – Past ${DAYS_BACK} Days</h1>
+      <hr/>
+      ${allArticles.map(a => `
+        <h2>${a.title}</h2>
+        <small>${new Date(a.date).toDateString()}</small>
+        ${a.content}
+        <hr/>
+      `).join("\n")}
+    </body>
+    </html>
+  `;
+
+  writeFileSync("kindle.html", htmlBody);
+
+  // Convert HTML → EPUB with TOC
+  execSync(`${CALIBRE_CONVERT} kindle.html kindle.epub --title "Engineering Blogs – Past Month" --authors "RSS Merge" --chapter "//h2"`);
+
+  // Email to Kindle
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: GMAIL_USER, pass: GMAIL_PASS }
+  });
+
+  await transporter.sendMail({
+    from: GMAIL_USER,
+    to: KINDLE_EMAIL,
+    subject: "Engineering Blogs – Past Month",
+    text: "Attached is the past month of engineering blog posts (EPUB).",
+    attachments: [{ filename: "kindle.epub", path: "./kindle.epub" }]
+  });
+
+  console.log(`✅ Sent ${allArticles.length} articles as EPUB to Kindle!`);
+}
+
+app.get("/", async (req, res) => {
+  await generateAndSendEPUB();
+  res.send("✅ EPUB sent to Kindle");
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Kindle-optimized RSS merger running on port ${PORT}`));
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Server running");
+});
