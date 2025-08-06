@@ -99,8 +99,17 @@ async function generateAndSendEPUB() {
 
   writeFileSync("kindle.html", htmlBody);
 
+  // Create timestamp for title & subject
+  const timestamp = new Date().toISOString().replace("T", " ").slice(0, 16);
+
   // Convert HTML → EPUB with TOC
-  execSync(`${CALIBRE_CONVERT} kindle.html kindle.epub --title "Engineering Blogs – Past Month" --authors "RSS Merge" --chapter "//h2"`);
+  execSync(`${CALIBRE_CONVERT} kindle.html kindle.epub \
+    --title "Engineering Blogs – ${timestamp}" \
+    --authors "RSS Merge" \
+    --chapter "//h2" \
+    --level1-toc "//h2" \
+    --max-toc-links 999 \
+    --toc-threshold 999`);
 
   // Email to Kindle
   const transporter = nodemailer.createTransport({
@@ -111,7 +120,7 @@ async function generateAndSendEPUB() {
   await transporter.sendMail({
     from: GMAIL_USER,
     to: KINDLE_EMAIL,
-    subject: "Engineering Blogs – Past Month",
+    subject: `Engineering Blogs – ${timestamp}`,
     text: "Attached is the past month of engineering blog posts (EPUB).",
     attachments: [{ filename: "kindle.epub", path: "./kindle.epub" }]
   });
